@@ -1,0 +1,19 @@
+{
+  "name": "@dakar/web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --configLoader runner",
+    "build": "tsc -p tsconfig.json && vite build --configLoader runner"
+  },
+  "dependencies": {
+    "@dakar/contracts": "*",
+    "@zxing/browser": "^0.1.5",
+    "qrcode": "^1.5.4",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@types/qrcode": "^1.5.5"
+  }
+}

@@ -1,0 +1,68 @@
+name: dakar-delivery-payments
+services:
+  bitcoin:
+    image: bitcoin/bitcoin:30.4
+    command:
+      - -regtest
+      - -server=1
+      - -txindex=1
+      - -fallbackfee=0.0002
+      - -rpcbind=0.0.0.0
+      - -rpcallowip=0.0.0.0/0
+      - -rpcuser=dakar-regtest
+      - -rpcpassword=local-only-regtest
+      - -zmqpubrawblock=tcp://0.0.0.0:28332
+      - -zmqpubrawtx=tcp://0.0.0.0:28333
+    volumes:
+      - bitcoin-data:/home/bitcoin/.bitcoin
+    networks: [regtest]
+  buyer:
+    image: lightninglabs/lnd:v0.21.6-beta
+    command: &lnd-command
+      - --lnddir=/data
+      - --bitcoin.active
+      - --bitcoin.regtest
+      - --bitcoin.node=bitcoind
+      - --bitcoind.rpchost=bitcoin:18443
+      - --bitcoind.rpcuser=dakar-regtest
+      - --bitcoind.rpcpass=local-only-regtest
+      - --bitcoind.zmqpubrawblock=tcp://bitcoin:28332
+      - --bitcoind.zmqpubrawtx=tcp://bitcoin:28333
+      - --restlisten=0.0.0.0:8080
+      - --rpclisten=0.0.0.0:10009
+      - --listen=0.0.0.0:9735
+      - --tlsextradomain=localhost
+      - --tlsextraip=127.0.0.1
+      - --noseedbackup
+    ports:
+      - 127.0.0.1:8081:8080
+    volumes:
+      - buyer-data:/data
+    depends_on: [bitcoin]
+    networks: [regtest]
+  seller:
+    image: lightninglabs/lnd:v0.21.6-beta
+    command: *lnd-command
+    ports:
+      - 127.0.0.1:8082:8080
+    volumes:
+      - seller-data:/data
+    depends_on: [bitcoin]
+    networks: [regtest]
+  courier:
+    image: lightninglabs/lnd:v0.21.6-beta
+    command: *lnd-command
+    ports:
+      - 127.0.0.1:8083:8080
+    volumes:
+      - courier-data:/data
+    depends_on: [bitcoin]
+    networks: [regtest]
+networks:
+  regtest:
+    driver: bridge
+volumes:
+  bitcoin-data:
+  buyer-data:
+  seller-data:
+  courier-data:
