@@ -1,4 +1,4 @@
-# FlashDrop — Dakar payment on delivery prototype
+# FlashDrop: Dakar payment on delivery prototype
 
 An English-language, regtest-only Lightning payment flow for a seller, buyer, and courier. The buyer holds the full price before dispatch, inspects the parcel, then authorizes release with a code. The seller's outgoing courier payment uses the same payment hash and reveals the secret needed to settle the seller's incoming payment. This is **payment authorization after inspection**, not cryptographic proof of physical handover.
 
