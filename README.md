@@ -2,6 +2,12 @@
 
 An English-language, regtest-only Lightning payment flow for a seller, buyer, and courier. The buyer holds the full price before dispatch, inspects the parcel, then authorizes release with a code. The seller's outgoing courier payment uses the same payment hash and reveals the secret needed to settle the seller's incoming payment. This is **payment authorization after inspection**, not cryptographic proof of physical handover.
 
+[Presentation](https://flashdrop-demo.lovable.app/?slide=1) · [GitHub repository](https://github.com/thecosmos42/flashdrop)
+
+## Problem and primary user
+
+FlashDrop is designed for small Dakar merchants selling through social media and using local couriers. Buyers want to inspect goods before releasing payment, sellers want commitment before dispatch. The prototype replaces cash collection at the handover with a held Lightning payment and deliberate buyer authorization. Seller interviews and a field pilot are the next validation step.
+
 ## Current status
 
 The app, three-node wallet topology, setup script, and focused tests are implemented. The same-hash chain was confirmed on three real LND regtest nodes. Three consecutive complete API journeys, one complete browser journey using the copy/paste release code, cancellation of held payments, restricted macaroon checks, and restart after a durable release job passed. See [test evidence](docs/test-results.md) for exact results and remaining gates. This software uses fictitious regtest satoshis only. It is not ready for real funds or public deployment.
@@ -30,24 +36,45 @@ npm run typecheck
 
 Run the smoke test only while the app is serving. `down` stops containers without deleting funds or data. Do not delete `.runtime/release.key` while an order may be settling: the backend needs it after restart. Do not publish the app, LND REST ports, database, access codes, or Docker volumes.
 
-## Three-minute demo
+## Seed data and testable happy path
 
-Open three independent browser profiles, one for each role. The seller creates an order for 10,000 sat of goods and 1,000 sat delivery. The buyer generates a payment secret in browser storage and holds 11,000 sat from the app's regtest buyer wallet. Wait for the buyer invoice to show **held**. The seller prepares dispatch; wait for the courier invoice and seller outgoing payment to be held. The courier marks pickup. After inspection, the buyer deliberately displays the QR code. The courier scans it or pastes its contents. The worker settles the courier hold, observes the seller's outgoing preimage, settles the seller's incoming hold, and marks the order complete only after both senders report success.
+The setup script seeds the local Bitcoin network with mined test funds, funds the buyer and seller wallets, opens both Lightning channels, and creates three role access codes. It does not seed real customer information or pre-completed orders. The smoke script creates its own fresh order on each run.
 
-For a restart demo, stop only the Node app after the courier submits the code, leave Docker running, then restart `scripts/dev.ps1`. The encrypted release job remains in SQLite and the worker resumes from LND's actual states. Never expose the QR or secret in screenshots or logs.
+For a manual demo, use this deterministic fixture: **Handmade basket**, quantity **1**, goods **10,000 sat**, delivery **1,000 sat**, total **11,000 sat**. These are fictitious local test funds. Keep the buyer in the same browser profile throughout so its locally stored release secret remains available.
+
+| Role | Action | Expected behavior |
+| --- | --- | --- |
+| Seller | Sign in using its code from `.runtime/demo-access.json`; create the fixture order | Order appears with total 11,000 sat |
+| Buyer | Open the order; select Prepare payment, then Hold 11,000 sat | Buyer payment shows Held |
+| Seller | Select Prepare delivery | Courier fee shows Held; order is Ready for pickup |
+| Courier | Select Parcel picked up | Order is Out for delivery |
+| Buyer | After inspection, show and copy the release code | Buyer deliberately authorizes payment release |
+| Courier | Paste the code and select Confirm code | Settling payment changes to Paid; both payment legs succeed |
+
+For a repeatable API check, keep the server running in the first terminal, open a second PowerShell in the repository, and run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/smoke.ps1
+```
+
+Expected output is `PASS: order <id> completed; buyer and courier payments confirmed.` The script checks that the courier fee is held before pickup and both outgoing payments end in `SUCCEEDED`. Complete or cancel any active order before running it. This check exercises real local LND nodes; it is separate from the unit tests. Previously recorded results are in [test evidence](docs/test-results.md); they are not a claim that a new installation has already passed.
 
 ## Architecture
 
 ```mermaid
-flowchart LR
-  B[Buyer web app + buyer LND] -->|11,000 sat hold, hash H| S[Seller LND]
-  S -->|1,000 sat hold, same hash H| C[Courier LND]
-  B -->|QR secret S after inspection| C
-  C -->|settle with S| S
-  S -->|observe S, settle buyer hold| B
-  A[Fastify + SQLite worker] --> B
-  A --> S
-  A --> C
+flowchart TB
+  UI[Seller / Buyer / Courier React views] -->|Role sessions, validated requests| API[Fastify API]
+  API --> DB[(SQLite orders and encrypted release jobs)]
+  WORKER[Reconciliation and settlement worker] <--> DB
+  API --> WORKER
+  WORKER -->|TLS and restricted macaroons| B[Buyer LND]
+  WORKER -->|TLS and restricted macaroons| S[Seller LND]
+  WORKER -->|TLS and restricted macaroons| C[Courier LND]
+  B -->|11,000 sat held payment, hash H| S
+  S -->|1,000 sat held payment, same hash H| C
+  CORE[Bitcoin Core: local regtest] --- B
+  CORE --- S
+  CORE --- C
 ```
 
 Fastify serves the React app and stores order state in SQLite. The worker polls real LND invoice and payment states every two seconds; there is no simulated payment ledger. Buyer secrets are generated with Web Crypto and stored in the buyer browser's IndexedDB. A release job stores the secret encrypted with AES-GCM until both legs settle. A SQLite lease prevents two app workers from operating on the same database.
@@ -61,13 +88,9 @@ Fastify serves the React app and stores order state in SQLite. The worker polls 
 - **Recovery:** Hash, invoices, send intents, release job, and observed payment states persist in SQLite. An unknown send outcome is looked up by hash before retry. The release key is fingerprinted so a changed key stops startup rather than discarding a pending job.
 - **Scope:** One host, three demo roles, short delivery windows, local regtest only. No on-ramp, fiat conversion, Nostr, dispute arbitration, or production wallet interoperability. Arbitrary external wallets have not been tested with held payments.
 
+Role authorization, CSRF and origin checks, strict Zod schemas, a 16 KB request-body limit, and a restrictive content security policy reduce the web attack surface. Request bodies, cookies, CSRF headers, and session cookies are redacted from application logs. Use synthetic order descriptions in the demo; a complete privacy review, including URL and error paths, remains required before claiming that no personal data can reach logs.
+
 The [test evidence](docs/test-results.md) records the completed checks and remaining validation work.
-
-## Before hackathon submission
-
-The payment chain, three consecutive API happy paths, one browser happy path, cancellation, restricted runtime permissions, and restart settlement pass on regtest. Remaining checks include fresh-volume setup, balance-delta measurement, camera and multi-device journeys, block-cutoff and node-outage cases, and privacy review. Do not claim production security or arbitrary-wallet support from the current evidence.
-
-If the same-hash courier chain proves unreliable in a broader environment, replace it with a distinct ordinary courier payment after buyer settlement and explicit handling of payout failure. Do not silently change the mechanism for an already funded order.
 
 ## Repository map
 
@@ -86,6 +109,18 @@ If the same-hash courier chain proves unreliable in a broader environment, repla
 
 Interview Dakar sellers and riders, adjust the workflow from their feedback, and measure merchants reached per week, order completion, time from handover to settlement, cancellations, support cases, and data use on a mid-range phone. A production version would need a clear custody model, wallet compatibility tests, secure mobile delivery of the buyer app, operational monitoring, and a defined refund and on-ramp process.
 
-## License
+## Proposed pilot and measurable next iteration
 
-MIT; see [LICENSE](LICENSE).
+The initial planning target is **10 Dakar merchants × 5 deliveries per merchant per week = 50 weekly orders**. This is a capacity assumption for a proposed pilot, not measured reach or a forecast. Validate the problem with five seller/rider interviews before recruiting merchants.
+
+| Metric | Definition |
+| --- | --- |
+| Weekly active merchants | Distinct consenting merchants creating an order in seven days |
+| Completion rate | Completed orders divided by funded orders, excluding orders still active |
+| Settlement latency | Median and p95 time from authorized release to both payments succeeding |
+| Cancellations and support | Canceled funded orders and help requests per 100 funded orders |
+| Mobile performance | Initial bytes transferred, load time, and successful task completion on a named mid-range phone and throttled connection |
+| Reliability | Recovery success after restart, node-outage failures, and orders requiring manual review |
+
+Next we plan to ship clearer deadline and recovery messaging, test the complete journey on separate phones, measure slow-network behavior, and complete the remaining outage, expiry, and privacy checks. We will define ordinary refund handling and test named external wallets before broadening the payment integration. Production custody, secure client delivery, on-ramps, and operational monitoring remain separate release gates.
+
